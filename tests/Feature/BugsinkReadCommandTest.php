@@ -4,11 +4,21 @@ use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 
 beforeEach(function (): void {
+    $this->reportPath = sys_get_temp_dir().'/bugsink-laravel-tests-'.uniqid().'/report.md';
+
     config()->set('bugsink', [
         'url' => 'https://bugsink.test',
         'token' => 'test-token',
         'project_id' => 1,
+        'report_path' => $this->reportPath,
     ]);
+});
+
+afterEach(function (): void {
+    if (is_dir($dir = dirname($this->reportPath))) {
+        array_map('unlink', glob($dir.'/*'));
+        rmdir($dir);
+    }
 });
 
 it('lists recent Bugsink issues with bearer authentication', function () {
@@ -50,6 +60,76 @@ it('returns the selected issue records as JSON', function () {
         ->expectsOutputToContain('"friendly_id": "BLISS-42"')
         ->doesntExpectOutputToContain('BLISS-43')
         ->assertSuccessful();
+});
+
+it('writes a Markdown report to the configured default path', function () {
+    Http::fake([
+        'https://bugsink.test/api/canonical/0/issues/*' => Http::response([
+            'results' => [
+                [
+                    'friendly_id' => 'BLISS-42',
+                    'last_seen' => '2026-09-11T20:45:00Z',
+                    'digested_event_count' => 3,
+                    'calculated_type' => 'RuntimeException',
+                    'calculated_value' => 'Save failed',
+                ],
+            ],
+        ]),
+    ]);
+
+    $this->artisan('bugsink:read')->assertSuccessful();
+
+    expect($this->reportPath)->toBeFile();
+    expect(file_get_contents($this->reportPath))
+        ->toContain('# Bugsink report')
+        ->toContain('BLISS-42')
+        ->toContain('Save failed');
+});
+
+it('skips writing the report file when --no-report is passed', function () {
+    Http::fake([
+        'https://bugsink.test/api/canonical/0/issues/*' => Http::response(['results' => []]),
+    ]);
+
+    $this->artisan('bugsink:read', ['--no-report' => true])->assertSuccessful();
+
+    expect($this->reportPath)->not->toBeFile();
+});
+
+it('honors a --report override path', function () {
+    Http::fake([
+        'https://bugsink.test/api/canonical/0/issues/*' => Http::response(['results' => []]),
+    ]);
+
+    $overridePath = dirname($this->reportPath).'/override.md';
+
+    $this->artisan('bugsink:read', ['--report' => $overridePath])->assertSuccessful();
+
+    expect($overridePath)->toBeFile();
+    expect($this->reportPath)->not->toBeFile();
+
+    unlink($overridePath);
+});
+
+it('emits strictly parseable JSON on stdout, uncorrupted by report-write status, and includes report_path', function () {
+    Http::fake([
+        'https://bugsink.test/api/canonical/0/issues/*' => Http::response([
+            'results' => [
+                ['friendly_id' => 'BLISS-42'],
+            ],
+        ]),
+    ]);
+
+    $exitCode = \Illuminate\Support\Facades\Artisan::call('bugsink:read', ['--json' => true]);
+    $output = \Illuminate\Support\Facades\Artisan::output();
+
+    expect($exitCode)->toBe(0);
+
+    $decoded = json_decode($output, associative: true, flags: JSON_THROW_ON_ERROR);
+
+    expect($decoded['report_path'])->toBe($this->reportPath);
+    expect($decoded['results'][0]['friendly_id'])->toBe('BLISS-42');
+    expect($this->reportPath)->toBeFile();
 });
 
 it('honors a --project override', function () {

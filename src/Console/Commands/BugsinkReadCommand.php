@@ -3,7 +3,9 @@
 namespace Okrg\BugsinkLaravel\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Filesystem\Filesystem;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 
 class BugsinkReadCommand extends Command
@@ -11,11 +13,13 @@ class BugsinkReadCommand extends Command
     protected $signature = 'bugsink:read
                             {--project= : Bugsink project ID}
                             {--limit=25 : Maximum number of issues to show}
-                            {--json : Output the Bugsink response as JSON}';
+                            {--json : Output the Bugsink response as JSON}
+                            {--report= : Path to write the generated Markdown report to (defaults to config("bugsink.report_path"))}
+                            {--no-report : Skip writing the Markdown report file}';
 
-    protected $description = 'Read recent Bugsink issues for a project';
+    protected $description = 'Read recent Bugsink issues for a project and write a Markdown report';
 
-    public function handle(): int
+    public function handle(Filesystem $files): int
     {
         $baseUrl = config('bugsink.url');
         $token = config('bugsink.token');
@@ -52,9 +56,26 @@ class BugsinkReadCommand extends Command
             ->take($limit)
             ->values();
 
+        $writtenReportPath = null;
+
+        if (! $this->option('no-report')) {
+            $reportPath = $this->option('report') ?? config('bugsink.report_path');
+
+            if (is_string($reportPath) && $reportPath !== '') {
+                $files->ensureDirectoryExists(dirname($reportPath));
+                $files->put($reportPath, $this->renderMarkdownReport($projectId, $issues));
+                $writtenReportPath = $reportPath;
+
+                if (! $this->option('json')) {
+                    $this->info("Report written to {$reportPath}");
+                }
+            }
+        }
+
         if ($this->option('json')) {
             $this->line((string) json_encode([
                 'results' => $issues,
+                'report_path' => $writtenReportPath,
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return self::SUCCESS;
@@ -68,16 +89,57 @@ class BugsinkReadCommand extends Command
 
         $this->table(
             ['ID', 'Last seen', 'Events', 'Type', 'Error'],
-            $issues->map(fn (array $issue): array => [
-                $issue['friendly_id'] ?? $issue['id'] ?? '',
-                $issue['last_seen'] ?? '',
-                $issue['digested_event_count'] ?? '',
-                $issue['calculated_type'] ?? '',
-                $issue['calculated_value'] ?? $issue['title'] ?? '',
-            ])->all(),
+            $issues->map(fn (array $issue): array => $this->issueRow($issue))->all(),
         );
 
         return self::SUCCESS;
+    }
+
+    private function renderMarkdownReport(mixed $projectId, Collection $issues): string
+    {
+        $lines = [
+            '# Bugsink report',
+            '',
+            "Generated: {$this->now()}",
+            "Project: {$projectId}",
+            '',
+            'This file is regenerated on every `bugsink:read` run. Do not hand-edit it.',
+            '',
+        ];
+
+        if ($issues->isEmpty()) {
+            $lines[] = 'No Bugsink issues found.';
+
+            return implode("\n", $lines)."\n";
+        }
+
+        $lines[] = '| ID | Last seen | Events | Type | Error |';
+        $lines[] = '|---|---|---|---|---|';
+
+        foreach ($issues as $issue) {
+            [$id, $lastSeen, $events, $type, $error] = $this->issueRow($issue);
+            $error = str_replace('|', '\\|', (string) $error);
+            $lines[] = "| {$id} | {$lastSeen} | {$events} | {$type} | {$error} |";
+        }
+
+        return implode("\n", $lines)."\n";
+    }
+
+    /** @return array{0: string, 1: string, 2: string, 3: string, 4: string} */
+    private function issueRow(array $issue): array
+    {
+        return [
+            $issue['friendly_id'] ?? $issue['id'] ?? '',
+            $issue['last_seen'] ?? '',
+            $issue['digested_event_count'] ?? '',
+            $issue['calculated_type'] ?? '',
+            $issue['calculated_value'] ?? $issue['title'] ?? '',
+        ];
+    }
+
+    private function now(): string
+    {
+        return gmdate('Y-m-d\TH:i:s\Z');
     }
 
     private function client(string $baseUrl, string $token): PendingRequest

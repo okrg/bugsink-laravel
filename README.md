@@ -41,7 +41,13 @@ Set these in `.env`:
 BUGSINK_URL=https://bugsink.example.com
 BUGSINK_API_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 BUGSINK_PROJECT_ID=1
+BUGSINK_REPORT_PATH=storage/app/bugsink-report.md
 ```
+
+`BUGSINK_REPORT_PATH` is optional; it defaults to
+`storage_path('app/bugsink-report.md')`, which Laravel's default
+`storage/app/.gitignore` already excludes from version control. The file is
+fully regenerated on every run — never hand-edit it.
 
 Generate a token from the Bugsink "Tokens" page, or via
 `bugsink-manage create_auth_token`. Tokens currently grant whole-installation
@@ -55,7 +61,17 @@ token, update the secret, delete the old token, then re-verify a read.
 php artisan bugsink:read
 php artisan bugsink:read --project=2 --limit=10
 php artisan bugsink:read --json
+php artisan bugsink:read --report=/custom/path/report.md
+php artisan bugsink:read --no-report
 ```
+
+Every run writes a Markdown report to `config('bugsink.report_path')`
+(override per-run with `--report=`, skip with `--no-report`). This is the
+standard, plain-text, referenceable output of a pull — check it into your
+own notes/tooling if you want a durable snapshot; the path itself is always
+regenerated, not appended to. With `--json`, the same path is echoed back as
+`report_path` in the JSON payload instead of a separate console line, so
+stdout stays strictly parseable.
 
 `bugsink:read` is an **on-demand snapshot**: one request to `/issues/`,
 sorted by `last_seen` descending, taking the first `--limit` results
