@@ -1,0 +1,94 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Laravel 10 is EOL: every 10.x release, including the final
+          # 10.50.3, carries GHSA-crmm-hgp2-wgrp and GHSA-5vg9-5847-vvmq,
+          # neither of which was ever backported into the 10.x line.
+          - php: '8.2'
+            laravel: '10'
+            testbench: '8.38.0'
+            framework: '10.50.3'
+            pest: '2.36.1'
+            audit-override: true
+          # Laravel 11 is EOL for the same two advisories.
+          - php: '8.3'
+            laravel: '11'
+            testbench: '9.17.0'
+            framework: '11.56.1'
+            pest: '2.36.1'
+            audit-override: true
+          # Laravel 12 (>=12.61.1) is the first line clear of both advisories;
+          # no override needed or applied.
+          - php: '8.3'
+            laravel: '12'
+            testbench: '10.11.0'
+            framework: '12.61.1'
+            pest: '3.8.7'
+            audit-override: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      - name: Pin dev/test dependencies for this matrix leg
+        run: |
+          composer require --dev "orchestra/testbench:${{ matrix.testbench }}" "pestphp/pest:${{ matrix.pest }}" --no-interaction --no-update
+          composer require "laravel/framework:${{ matrix.framework }}" --no-interaction --no-update
+
+      # CI-local only. This edits the ephemeral checkout's composer.json for
+      # this job alone; it is never committed and never applies to a
+      # consumer's `composer require okrg/bugsink-laravel`, nor to any other
+      # project's composer.json (e.g. Bliss's). It exists solely so an EOL
+      # Laravel branch with a permanently unpatched, already-public advisory
+      # can still be installed for testing.
+      - name: CI-local advisory-block override (EOL branches only)
+        if: matrix.audit-override
+        run: composer config policy.advisories.block false
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction
+
+      # Documented, already-public advisories that are permanently unpatched
+      # in the EOL Laravel 10/11 lines (never backported): fail the job only
+      # if an advisory OTHER than these two GHSAs shows up, so a genuinely
+      # new/unknown finding still breaks CI instead of being masked. Verified
+      # locally: an unlisted id makes this step exit 1; only-listed ids exit 0.
+      - name: Composer audit (gated on documented EOL advisories only)
+        if: matrix.audit-override
+        env:
+          EXPECTED_ADVISORY_IDS: '["PKSA-m5cs-t1y6-qpcs","PKSA-3r5d-mb8f-1qw9","PKSA-mdq4-51ck-6kdq"]'
+        run: |
+          composer audit --format=json --no-interaction > audit.json || true
+          cat audit.json
+          unexpected=$(jq -r --argjson expected "$EXPECTED_ADVISORY_IDS" \
+            '[(.advisories // {}) | to_entries[].value[].advisoryId] - $expected | .[]' audit.json)
+          if [ -n "$unexpected" ]; then
+            echo "::error::Unexpected advisory not in the documented EOL allow-list (GHSA-crmm-hgp2-wgrp, GHSA-5vg9-5847-vvmq):"
+            echo "$unexpected"
+            exit 1
+          fi
+          echo "Only the documented EOL advisories (or none) are present. OK."
+
+      # Laravel 12+ has no documented EOL advisories; any finding here is new
+      # and must fail the job normally.
+      - name: Composer audit (Laravel 12+, must be clean)
+        if: "!matrix.audit-override"
+        run: composer audit
+
+      - name: Run tests
+        run: vendor/bin/pest
