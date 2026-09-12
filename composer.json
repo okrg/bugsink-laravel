@@ -1,0 +1,47 @@
+{
+    "name": "okrg/bugsink-laravel",
+    "description": "Artisan command and service provider for pulling issues from a self-hosted Bugsink instance's canonical API.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "bugsink",
+        "sentry",
+        "error-tracking",
+        "observability"
+    ],
+    "require": {
+        "php": "^8.1",
+        "illuminate/console": "^10.0|^11.0|^12.0",
+        "illuminate/http": "^10.0|^11.0|^12.0",
+        "illuminate/support": "^10.0|^11.0|^12.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0|^9.0|^10.0",
+        "pestphp/pest": "^2.0|^3.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Okrg\\BugsinkLaravel\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Okrg\\BugsinkLaravel\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Okrg\\BugsinkLaravel\\BugsinkServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
