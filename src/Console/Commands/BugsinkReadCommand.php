@@ -65,7 +65,12 @@ class BugsinkReadCommand extends Command
                 try {
                     $files->ensureDirectoryExists(dirname($reportPath));
                     $bytesWritten = $files->put($reportPath, $this->renderMarkdownReport($projectId, $issues));
-                } catch (\Throwable $exception) {
+                } catch (\ErrorException $exception) {
+                    // file_put_contents()/mkdir() report failures (permissions,
+                    // disk full, path is a directory, etc.) as PHP warnings,
+                    // which Laravel's error handler converts to ErrorException.
+                    // Only that failure mode is treated as a report-write
+                    // failure; a genuine \Error/\TypeError still propagates.
                     $bytesWritten = false;
                 }
 
@@ -74,7 +79,6 @@ class BugsinkReadCommand extends Command
 
                     return self::FAILURE;
                 }
-
 
                 $writtenReportPath = $reportPath;
 
