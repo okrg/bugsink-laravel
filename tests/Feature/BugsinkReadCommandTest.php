@@ -111,6 +111,39 @@ it('honors a --report override path', function () {
     unlink($overridePath);
 });
 
+it('resolves a relative report path against base_path()', function () {
+    Http::fake([
+        'https://bugsink.test/api/canonical/0/issues/*' => Http::response(['results' => []]),
+    ]);
+
+    $expectedPath = base_path('relative-bugsink-report.md');
+
+    if (is_file($expectedPath)) {
+        unlink($expectedPath);
+    }
+
+    $this->artisan('bugsink:read', ['--report' => 'relative-bugsink-report.md'])->assertSuccessful();
+
+    expect($expectedPath)->toBeFile();
+
+    unlink($expectedPath);
+});
+
+it('preserves an absolute --report path unchanged (does not re-resolve it)', function () {
+    Http::fake([
+        'https://bugsink.test/api/canonical/0/issues/*' => Http::response(['results' => []]),
+    ]);
+
+    $absolutePath = dirname($this->reportPath).'/absolute-override.md';
+
+    $this->artisan('bugsink:read', ['--report' => $absolutePath])->assertSuccessful();
+
+    expect($absolutePath)->toBeFile();
+    expect($absolutePath)->not->toBe(base_path($absolutePath));
+
+    unlink($absolutePath);
+});
+
 it('emits strictly parseable JSON on stdout, uncorrupted by report-write status, and includes report_path', function () {
     Http::fake([
         'https://bugsink.test/api/canonical/0/issues/*' => Http::response([

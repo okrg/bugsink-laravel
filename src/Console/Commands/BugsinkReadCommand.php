@@ -62,6 +62,8 @@ class BugsinkReadCommand extends Command
             $reportPath = $this->option('report') ?? config('bugsink.report_path');
 
             if (is_string($reportPath) && $reportPath !== '') {
+                $reportPath = $this->resolveReportPath($reportPath);
+
                 try {
                     $files->ensureDirectoryExists(dirname($reportPath));
                     $bytesWritten = $files->put($reportPath, $this->renderMarkdownReport($projectId, $issues));
@@ -160,6 +162,22 @@ class BugsinkReadCommand extends Command
         $value = str_replace(["\r\n", "\r", "\n"], ' ', (string) $value);
 
         return str_replace('|', '\\|', $value);
+    }
+
+    // A relative override (e.g. BUGSINK_REPORT_PATH=bugsink-report.md) is
+    // resolved against the consuming application's base_path(), so a
+    // portable relative value works the same in every environment. The
+    // package's own default is already absolute (storage_path(...)) and is
+    // unaffected; this does not change what any consumer gets by default.
+    private function resolveReportPath(string $path): string
+    {
+        $isAbsolute = (bool) preg_match('#^(/|[a-zA-Z]:[\\\\/])#', $path);
+
+        if ($isAbsolute || ! function_exists('base_path')) {
+            return $path;
+        }
+
+        return base_path($path);
     }
 
     private function now(): string
