@@ -132,6 +132,51 @@ it('emits strictly parseable JSON on stdout, uncorrupted by report-write status,
     expect($this->reportPath)->toBeFile();
 });
 
+it('sanitizes pipes and line breaks in issue fields so the Markdown table cannot break', function () {
+    Http::fake([
+        'https://bugsink.test/api/canonical/0/issues/*' => Http::response([
+            'results' => [
+                [
+                    'friendly_id' => 'BLISS-42',
+                    'last_seen' => '2026-09-11T20:45:00Z',
+                    'digested_event_count' => 1,
+                    'calculated_type' => 'RuntimeException',
+                    'calculated_value' => "Save failed | disk full\r\nsecond line\nthird line",
+                ],
+            ],
+        ]),
+    ]);
+
+    $this->artisan('bugsink:read')->assertSuccessful();
+
+    $report = file_get_contents($this->reportPath);
+    $rows = array_values(array_filter(explode("\n", trim($report))));
+    $lastRow = end($rows);
+
+    // Un-escape literal pipes before splitting, so only real column
+    // delimiters are counted: exactly 5 columns, i.e. 7 explode() segments
+    // (2 empty boundary segments either side of the leading/trailing "|").
+    $fields = explode('|', str_replace('\\|', '§', $lastRow));
+
+    expect($fields)->toHaveCount(7);
+    expect($report)->toContain('Save failed \\| disk full second line third line');
+    expect($report)->not->toContain("\r");
+});
+
+it('fails the command when the report file cannot be written', function () {
+    Http::fake([
+        'https://bugsink.test/api/canonical/0/issues/*' => Http::response(['results' => []]),
+    ]);
+
+    mkdir($this->reportPath, recursive: true);
+
+    $this->artisan('bugsink:read')
+        ->expectsOutputToContain('Failed to write Bugsink report')
+        ->assertFailed();
+
+    rmdir($this->reportPath);
+});
+
 it('honors a --project override', function () {
     Http::fake([
         'https://bugsink.test/api/canonical/0/issues/*' => Http::response(['results' => []]),

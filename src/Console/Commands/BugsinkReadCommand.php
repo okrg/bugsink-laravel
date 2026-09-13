@@ -62,8 +62,20 @@ class BugsinkReadCommand extends Command
             $reportPath = $this->option('report') ?? config('bugsink.report_path');
 
             if (is_string($reportPath) && $reportPath !== '') {
-                $files->ensureDirectoryExists(dirname($reportPath));
-                $files->put($reportPath, $this->renderMarkdownReport($projectId, $issues));
+                try {
+                    $files->ensureDirectoryExists(dirname($reportPath));
+                    $bytesWritten = $files->put($reportPath, $this->renderMarkdownReport($projectId, $issues));
+                } catch (\Throwable $exception) {
+                    $bytesWritten = false;
+                }
+
+                if ($bytesWritten === false) {
+                    $this->error("Failed to write Bugsink report to {$reportPath}.");
+
+                    return self::FAILURE;
+                }
+
+
                 $writtenReportPath = $reportPath;
 
                 if (! $this->option('json')) {
@@ -117,9 +129,11 @@ class BugsinkReadCommand extends Command
         $lines[] = '|---|---|---|---|---|';
 
         foreach ($issues as $issue) {
-            [$id, $lastSeen, $events, $type, $error] = $this->issueRow($issue);
-            $error = str_replace('|', '\\|', (string) $error);
-            $lines[] = "| {$id} | {$lastSeen} | {$events} | {$type} | {$error} |";
+            $cells = array_map(
+                fn (mixed $cell): string => $this->markdownCell($cell),
+                $this->issueRow($issue),
+            );
+            $lines[] = '| '.implode(' | ', $cells).' |';
         }
 
         return implode("\n", $lines)."\n";
@@ -135,6 +149,13 @@ class BugsinkReadCommand extends Command
             $issue['calculated_type'] ?? '',
             $issue['calculated_value'] ?? $issue['title'] ?? '',
         ];
+    }
+
+    private function markdownCell(mixed $value): string
+    {
+        $value = str_replace(["\r\n", "\r", "\n"], ' ', (string) $value);
+
+        return str_replace('|', '\\|', $value);
     }
 
     private function now(): string
